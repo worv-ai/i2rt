@@ -387,6 +387,15 @@ class DMChainCanInterface(MotorChain):
         motor_direction: np.ndarray,
         channel: str = "PCAN_USBBUS1",
         bitrate: int = 1000000,
+        # python-can bustype. None = infer from the channel name (legacy behaviour:
+        # a channel containing "can" is assumed to be socketcan).
+        #
+        # Inference is not enough on macOS: there is no SocketCAN there, so a CANable
+        # has to be reached through python-can's "gs_usb" backend -- and that backend's
+        # channel is the USB product name, which for a CANable is "canable2 gs_usb".
+        # That string contains "can", so the inference picks socketcan and the open fails.
+        # Passing bustype explicitly is the only way out; callers could not override it before.
+        bustype: Optional[str] = None,
         start_thread: bool = True,  # If true, will start the internal motor reading loop
         motor_chain_name: str = "default_motor_chain",
         receive_mode: ReceiveMode = ReceiveMode.p16,
@@ -434,8 +443,19 @@ class DMChainCanInterface(MotorChain):
             # Stated rather than defaulted: this is the path that is about to run the chain, and a motor
             # left in the wrong mode cannot be commanded at all. --survey-only is the caller that says False.
             repair=True,
+            bustype=bustype,
         )
-        if "can" in channel:
+        if bustype is not None:
+            self.motor_interface = DMSingleMotorCanInterface(
+                channel=channel,
+                bustype=bustype,
+                bitrate=bitrate,
+                receive_mode=receive_mode,
+                name=motor_chain_name,
+                control_mode=control_mode,
+                use_buffered_reader=use_buffered_reader,
+            )
+        elif "can" in channel:
             self.motor_interface = DMSingleMotorCanInterface(
                 channel=channel,
                 bustype="socketcan",

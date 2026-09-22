@@ -127,6 +127,16 @@ class CanInterface:
             else:
                 message = self.bus.recv(timeout=0.001)
             if message:
+                # Skip our own transmitted frames.
+                #
+                # Some backends echo every frame we send back to the application (gs_usb does;
+                # socketcan does not unless receive_own_messages is on). An echo carries the
+                # *request* arbitration id, never the motor's reply id, so it can never be the
+                # response we are waiting for -- but it arrives first and gets returned here,
+                # which makes the caller see an id mismatch and burn a retry. Six motors x five
+                # retries later the chain fails to start on a bus where every motor answered.
+                if not getattr(message, "is_rx", True):
+                    continue
                 return message
         if not supress_warning:
             logging.warning(

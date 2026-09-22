@@ -154,6 +154,9 @@ def get_yam_robot(
     set_realtime_and_pin_callback: Optional[Callable[[int], None]] = None,
     enable_auto_recovery: bool = False,
     use_coulomb_friction: bool = False,
+    # python-can bustype. None = 종래 동작(채널명으로 socketcan 추정).
+    # macOS 에는 SocketCAN 이 없어 CANable 을 "gs_usb" 로 열어야 한다.
+    bustype: Optional[str] = None,
 ) -> "Robot":
     """Create a YAM-family robot (real or sim).
 
@@ -262,6 +265,7 @@ def get_yam_robot(
         motor_offsets,
         directions,
         channel,
+        bustype=bustype,
         motor_chain_name="yam_real",
         receive_mode=ReceiveMode.p16,
         start_thread=False,

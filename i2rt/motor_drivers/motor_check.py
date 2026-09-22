@@ -204,10 +204,10 @@ def _nothing_to_check(channel: str, motor_list: Sequence[Sequence[Any]]) -> None
     logger.info("nothing to check on %s: %d row(s), none of them a motor", channel, len(motor_list))
 
 
-def _open_bus(channel: str, name: str, what: str) -> RawCanInterface:
+def _open_bus(channel: str, name: str, what: str, bustype: str = "socketcan") -> RawCanInterface:
     """Open the raw interface both checks read through, or say why the channel is unusable."""
     try:
-        return RawCanInterface(channel=channel, bustype="socketcan", name=name)
+        return RawCanInterface(channel=channel, bustype=bustype, name=name)
     except BUS_ERRORS as e:
         raise RuntimeError(
             f"could not open {channel} to check the motor {what}: {e}. Check the interface is up "
@@ -224,6 +224,10 @@ def run_startup_checks(
     control_mode: str,
     loop_critical_motor_ids: Sequence[int] | None = None,
     repair: bool = True,
+    # python-can bustype. None = 종래 동작(채널명으로 socketcan 추정).
+    # macOS 에는 SocketCAN 이 없어 gs_usb 로 열어야 하는데, 그 채널명("canable2 gs_usb")에
+    # "can" 이 들어 있어 추정이 오작동한다 → 명시되면 그대로 쓰고 거부 조건도 건너뛴다.
+    bustype: str | None = None,
 ) -> None:
     """Run whichever startup checks a caller asked for, in the only order that is safe.
 
@@ -256,7 +260,7 @@ def run_startup_checks(
             "advise rewriting PMAX, and write CTRL_MODE to Flash on a motor whose repair is to be "
             "swapped out. Ask for both, or for neither."
         )
-    if "can" not in channel:
+    if bustype is None and "can" not in channel:
         raise ValueError(
             f"cannot check the motors on {channel!r}: both checks read registers over socketcan, and "
             "this is not a socketcan channel. Starting anyway would trust every motor's declared type "
@@ -266,9 +270,11 @@ def run_startup_checks(
         )
     # check_motor_types is necessarily True here: neither-flag returned above, and config-without-types
     # was just refused. Positional, because the call signature is asserted that way by the tests.
-    verify_motor_types(channel, motor_list)
+    verify_motor_types(channel, motor_list, bustype=bustype)
     if check_motor_config:
-        verify_motor_config(channel, motor_list, control_mode, loop_critical_motor_ids, repair=repair)
+        verify_motor_config(
+            channel, motor_list, control_mode, loop_critical_motor_ids, repair=repair, bustype=bustype
+        )
 
 
 # --------------------------------------------------------------------------------------------------
@@ -394,7 +400,12 @@ def _describe_mismatch(motor_id: int, motor_type: str, actual: float, expected: 
     )
 
 
-def verify_motor_types(channel: str, motor_list: Sequence[Sequence[Any]]) -> None:
+def verify_motor_types(
+    channel: str,
+    motor_list: Sequence[Sequence[Any]],
+    # python-can bustype. None = socketcan(종래). macOS 는 gs_usb 로 열어야 한다.
+    bustype: str | None = None,
+) -> None:
     """Check that every motor on ``channel`` is the type ``motor_list`` declares.
 
     ``motor_list`` rows are ``(can_id, motor_type)``; ``_motor_rows`` coerces them and drops the
@@ -419,7 +430,7 @@ def verify_motor_types(channel: str, motor_list: Sequence[Sequence[Any]]) -> Non
         channel,
         ", ".join(f"{motor_id} {motor_type}" for motor_id, motor_type in motors),
     )
-    iface = _open_bus(channel, "motor_type_check", "types")
+    iface = _open_bus(channel, "motor_type_check", "types", bustype=bustype or "socketcan")
 
     mismatched: list[str] = []
     try:
@@ -769,6 +780,8 @@ def verify_motor_config(
     loop_critical_motor_ids: Sequence[int] | None = None,
     *,
     repair: bool = True,
+    # python-can bustype. None = socketcan(종래). macOS 는 gs_usb 로 열어야 한다.
+    bustype: str | None = None,
 ) -> None:
     """Check every motor's control mode and feedback scaling on ``channel``.
 
@@ -828,7 +841,7 @@ def verify_motor_config(
         channel,
         ", ".join(f"{motor_id} {motor_type}" for motor_id, motor_type in motors),
     )
-    iface = _open_bus(channel, "motor_config_check", "configuration")
+    iface = _open_bus(channel, "motor_config_check", "configuration", bustype=bustype or "socketcan")
 
     try:
         wrong: list[tuple[int, Scalar]] = []
