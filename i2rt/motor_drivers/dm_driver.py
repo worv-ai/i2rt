@@ -197,7 +197,15 @@ class DMSingleMotorCanInterface(CanInterface):
                 logging.warning(
                     "\033[91m" + "CAN Error: Failed to communicate with motor over can bus. Retrying..." + "\033[0m"
                 )
-        # message = self._send_message_get_response(id, data)
+        # Drain the replies these three frames produce.
+        #
+        # We send without reading, so the motor's answers stay queued. They carry the *reply*
+        # arbitration id (motor_id + 16 in p16 mode), which is exactly what the next
+        # _send_message_get_response is waiting for -- so the very next call returns a stale
+        # clear-error reply as if it were the answer to its own request, and every subsequent
+        # exchange on this motor is off by one. That desync shows up as a communication failure
+        # on a *later* motor in the chain, which is a hard place to look for it.
+        self._drain_bus(timeout_s=0.03)
 
     def motor_off(self, motor_id: int) -> None:
         """Turn off the motor.
@@ -571,6 +579,19 @@ class DMChainCanInterface(MotorChain):
         self.motor_interface._drain_bus(timeout_s=0.05)
         for motor_id, motor_type in self.motor_list:
             logging.info(f"Turning on motor_id: {motor_id}, motor_type: {motor_type}")
+            # Clear any latched fault before enabling.
+            #
+            # A motor that was enabled and then stopped hearing commands latches error 0xD
+            # (communication loss), and refuses to enable again while it is latched. That state
+            # is easy to reach: if this very loop fails partway -- for any reason -- the motors
+            # it already enabled are left without a commander and latch. The next attempt then
+            # fails *earlier*, latching more of them, so the arm gets progressively harder to
+            # start and the failing motor id wanders (observed: 1 -> 3 -> 4 -> 5 across runs)
+            # until the bus is power-cycled.
+            #
+            # clean_error is idempotent and costs one frame on a healthy motor, so it is cheap
+            # insurance against a failure mode that otherwise needs physical intervention.
+            self.motor_interface.clean_error(motor_id)
             time.sleep(0.003)
             motor_feedback.append(self.motor_interface.motor_on(motor_id, motor_type))
         self._update_absolute_positions(motor_feedback)
